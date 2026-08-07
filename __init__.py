@@ -782,7 +782,7 @@ def _bar_html(entries: list[dict], current: dict[str, set[str]]) -> str:
         # real line break without HTML in the attribute.
         '<div id="{tooltip_id}" style="position:fixed; display:none; '
         'z-index:10000; max-width:300px; padding:10px 14px; '
-        'background:#2596be; color:#eeeeee; '
+        'background:#3d3d3d; color:#eeeeee; '
         'border-radius:6px; border:1px solid rgba(255,255,255,0.18); '
         'box-shadow:0 2px 10px rgba(0,0,0,0.4); pointer-events:none; '
         'align-items:center; gap:12px;">'
