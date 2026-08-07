@@ -559,13 +559,15 @@ def _tooltip_text(entry: dict | None) -> str:
 
 
 def _similar_kanji_html(word_kanji: list[str]) -> str:
-    """"Similar: 末, 味, 沫" per source kanji that has any confusable
+    """"Similar: 末(2), 味(5), 沫" per source kanji that has any confusable
     neighbors - folded in from anki_addon_confused_kanji, same rules:
 
     - every neighbor is shown, none filtered out
     - a neighbor with >=1 note anywhere in the collection is a green,
-      clickable, dotted-underline link to those exact notes (nid:1,2,3);
-      one with zero notes is plain non-clickable text (no dead-end search)
+      clickable, dotted-underline link to those exact notes (nid:1,2,3),
+      labeled with the note count in parens - same "(count)" convention
+      _reading_span uses for on/kun readings; one with zero notes is plain
+      non-clickable text with no count (no dead-end search)
     - hovering any neighbor shows its meaning/readings via the tooltip this
       bar already renders (see _tooltip_text and the shared JS in
       _bar_html's returned HTML)
@@ -594,8 +596,8 @@ def _similar_kanji_html(word_kanji: list[str]) -> str:
                 links.append(
                     '<span onclick="pycmd(\'kanjidefs-confused:{}\'); return false;"{} '
                     'style="cursor:pointer; text-decoration:underline dotted; '
-                    'text-underline-offset:2px; color:#4caf50;">{}</span>'.format(
-                        html.escape(target), tooltip_attr, html.escape(neighbor))
+                    'text-underline-offset:2px; color:#4caf50;">{}({})</span>'.format(
+                        html.escape(target), tooltip_attr, html.escape(neighbor), len(note_ids))
                 )
             else:
                 links.append(
@@ -606,7 +608,7 @@ def _similar_kanji_html(word_kanji: list[str]) -> str:
         if not links:
             continue
         rows.append(
-            '<div style="padding:1px 0; font-size:16px; opacity:0.85;">'
+            '<div style="padding:1px 0; font-size:18px; opacity:0.85;">'
             '<span style="opacity:0.65;">Similar:</span> '
             '{}'
             '</div>'.format(", ".join(links))
@@ -690,7 +692,7 @@ def _bar_html(entries: list[dict], current: dict[str, set[str]]) -> str:
             '<div style="padding:1px 0;">'
             '<div style="display:flex; align-items:baseline; gap:0.6em; '
             'text-align:left; color:#dddddd;">'
-            '<span style="font-size:30px; flex:0 0 auto; min-width:1.4em; color:#ffffff;">{}</span>'
+            '<span style="font-size:38px; flex:0 0 auto; min-width:1.4em; color:#ffffff;">{}</span>'
             '<span style="font-size:18px; flex:1 1 auto;">{}</span>'
             '<span style="font-size:16px; flex:0 0 auto; '
             'white-space:nowrap; color:#dddddd;">{}</span>'
