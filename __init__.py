@@ -694,6 +694,20 @@ def _bar_html(entries: list[dict], current: dict[str, set[str]]) -> str:
         # margin/color handling to read as "subtle" rather than a hard rule.
         border = ("border-top:1px solid rgba(255,255,255,0.12); margin-top:4px; "
                   "padding-top:4px; " if i > 0 else "")
+        # One grid per kanji entry: 3 columns (glyph, meanings, readings) x
+        # 2 rows (meanings/readings line, then the Similar line). The glyph
+        # spans BOTH rows (grid-row:1/3) so it's vertically centered across
+        # the entry's full height and the Similar line's own column starts
+        # at column 2 - the same x position meanings starts at - rather
+        # than being a separate full-width block indented to fake that
+        # alignment. grid-template-columns uses the same 2em/1fr/1fr split
+        # as before: fixed glyph column, meanings and readings sharing the
+        # remaining space evenly regardless of either one's own content
+        # length.
+        similar_cell = (
+            '<div style="grid-column:2 / 4; grid-row:2; text-align:left;">{}</div>'.format(similar_row)
+            if similar_row else ""
+        )
         rows.append(
             # Explicit light text color, not inherited - see the bar
             # background comment below: an opaque bar can no longer borrow
@@ -703,19 +717,18 @@ def _bar_html(entries: list[dict], current: dict[str, set[str]]) -> str:
             # THIS span's color, not the row's #dddddd, unless this span
             # itself pins the same light color).
             '<div style="padding:1px 0; {border}">'
-            '<div style="display:flex; align-items:center; gap:0.6em; '
-            'text-align:left; color:#dddddd;">'
-            '<span style="font-size:38px; flex:0 0 auto; min-width:1.4em; color:#ffffff;">{}</span>'
-            '<span style="font-size:18px; flex:1 1 auto;">{}</span>'
-            '<span style="font-size:16px; flex:0 0 auto; '
-            'white-space:nowrap; color:#dddddd;">{}</span>'
+            '<div style="display:grid; grid-template-columns:2.4em 1fr 1fr; '
+            'column-gap:0.6em; text-align:left; color:#dddddd;">'
+            '<span style="grid-column:1; grid-row:1 / 3; font-size:46px; '
+            'color:#ffffff; align-self:center; margin-right:0.6em;">{}</span>'
+            '<span style="grid-column:2; grid-row:1; font-size:18px; '
+            'align-self:center;">{}</span>'
+            '<span style="grid-column:3; grid-row:1; font-size:16px; '
+            'color:#dddddd; align-self:start;">{}</span>'
+            '{}'
             '</div>'
-            # Left margin matches the kanji column's own footprint (1.4em
-            # min-width + 0.6em flex gap) so "Similar: ..." lines up under
-            # the meanings text above it, not under the kanji glyph.
-            '<div style="margin-left:2em; text-align:left;">{}</div>'
             '</div>'.format(
-                html.escape(e["kanji"]), html.escape(meanings), reading_html, similar_row,
+                html.escape(e["kanji"]), html.escape(meanings), reading_html, similar_cell,
                 border=border)
         )
 
@@ -769,7 +782,7 @@ def _bar_html(entries: list[dict], current: dict[str, set[str]]) -> str:
         # real line break without HTML in the attribute.
         '<div id="{tooltip_id}" style="position:fixed; display:none; '
         'z-index:10000; max-width:300px; padding:10px 14px; '
-        'background:#1a1a1a; color:#eeeeee; '
+        'background:#2596be; color:#eeeeee; '
         'border-radius:6px; border:1px solid rgba(255,255,255,0.18); '
         'box-shadow:0 2px 10px rgba(0,0,0,0.4); pointer-events:none; '
         'align-items:center; gap:12px;">'
