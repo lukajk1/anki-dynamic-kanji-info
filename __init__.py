@@ -703,7 +703,7 @@ def _bar_html(entries: list[dict], current: dict[str, set[str]]) -> str:
             # THIS span's color, not the row's #dddddd, unless this span
             # itself pins the same light color).
             '<div style="padding:1px 0; {border}">'
-            '<div style="display:flex; align-items:baseline; gap:0.6em; '
+            '<div style="display:flex; align-items:center; gap:0.6em; '
             'text-align:left; color:#dddddd;">'
             '<span style="font-size:38px; flex:0 0 auto; min-width:1.4em; color:#ffffff;">{}</span>'
             '<span style="font-size:18px; flex:1 1 auto;">{}</span>'
