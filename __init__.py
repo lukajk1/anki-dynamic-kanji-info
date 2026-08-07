@@ -127,6 +127,8 @@ MAX_SIMILAR_LINKS = 24
 THIS_BAR_ID = "kanjidefs-overlay-bar"
 THIS_SPACER_ID = "kanjidefs-overlay-spacer"
 THIS_TOOLTIP_ID = "kanjidefs-overlay-tooltip"
+THIS_TOOLTIP_KANJI_ID = "kanjidefs-overlay-tooltip-kanji"
+THIS_TOOLTIP_TEXT_ID = "kanjidefs-overlay-tooltip-text"
 THIS_STACK_ORDER = 0  # top-most - see module docstring
 
 # Gap between the bottom of the window and the reviewer's own answer
@@ -588,7 +590,12 @@ def _similar_kanji_html(word_kanji: list[str]) -> str:
             if link_count >= MAX_SIMILAR_LINKS:
                 break
             tooltip = _tooltip_text(defs_by_kanji.get(neighbor))
-            tooltip_attr = (' data-tooltip="{}"'.format(html.escape(tooltip))
+            # data-kanji carries the BARE kanji for the tooltip's glyph
+            # column - el.textContent would include the "(count)" suffix
+            # the link itself displays, which isn't what the tooltip's
+            # large-glyph side should show.
+            tooltip_attr = (' data-tooltip="{}" data-kanji="{}"'.format(
+                                html.escape(tooltip), html.escape(neighbor))
                              if tooltip else "")
             note_ids = _known.note_ids_for(neighbor) if _known.built else set()
             if note_ids:
@@ -669,7 +676,7 @@ def _bar_html(entries: list[dict], current: dict[str, set[str]]) -> str:
             similar_html_by_kanji[e["kanji"]] = row_html
 
     rows = []
-    for e in entries:
+    for i, e in enumerate(entries):
         meanings = ", ".join(e["meanings"])
         kanji_current = current.get(e["kanji"], set())
         on_spans = [_reading_span(e["kanji"], r, kanji_current) for r in e["on"]]
@@ -681,6 +688,12 @@ def _bar_html(entries: list[dict], current: dict[str, set[str]]) -> str:
         # a kanji_defs entry with nothing to say about similars doesn't
         # leave a blank gap.
         similar_row = similar_html_by_kanji.get(e["kanji"], "")
+        # A subtle top border between kanji entries (not on the first one,
+        # so there's no stray line flush against the bar's own top edge) -
+        # a thin hairline rather than a real <hr>, which would need its own
+        # margin/color handling to read as "subtle" rather than a hard rule.
+        border = ("border-top:1px solid rgba(255,255,255,0.12); margin-top:4px; "
+                  "padding-top:4px; " if i > 0 else "")
         rows.append(
             # Explicit light text color, not inherited - see the bar
             # background comment below: an opaque bar can no longer borrow
@@ -689,7 +702,7 @@ def _bar_html(entries: list[dict], current: dict[str, set[str]]) -> str:
             # "inherit" for the non-current case, which resolves against
             # THIS span's color, not the row's #dddddd, unless this span
             # itself pins the same light color).
-            '<div style="padding:1px 0;">'
+            '<div style="padding:1px 0; {border}">'
             '<div style="display:flex; align-items:baseline; gap:0.6em; '
             'text-align:left; color:#dddddd;">'
             '<span style="font-size:38px; flex:0 0 auto; min-width:1.4em; color:#ffffff;">{}</span>'
@@ -702,7 +715,8 @@ def _bar_html(entries: list[dict], current: dict[str, set[str]]) -> str:
             # the meanings text above it, not under the kanji glyph.
             '<div style="margin-left:2em; text-align:left;">{}</div>'
             '</div>'.format(
-                html.escape(e["kanji"]), html.escape(meanings), reading_html, similar_row)
+                html.escape(e["kanji"]), html.escape(meanings), reading_html, similar_row,
+                border=border)
         )
 
     return (
@@ -742,18 +756,34 @@ def _bar_html(entries: list[dict], current: dict[str, set[str]]) -> str:
         # anki_addon_confused_kanji) - one element, positioned above
         # whichever span is hovered, filled from that span's data-tooltip
         # attribute (already in the page from _similar_kanji_html/_lookup,
-        # no per-hover query). white-space:pre-line renders _tooltip_text's
-        # embedded "\n" as a real line break without HTML in the attribute.
+        # no per-hover query) plus its own text content (the hovered kanji
+        # itself). Flex row: the kanji glyph on the left, sized/colored
+        # like the bar's own big kanji column, then the meanings/readings
+        # text - align-items:stretch (the flex default) makes the glyph
+        # column's height track the text column's, so the glyph area grows
+        # vertically with the tooltip rather than needing a fixed height;
+        # the glyph's own line-height:1 plus the row's align-items:center
+        # keeps the character centered in whatever height that ends up
+        # being, with room to breathe via the row gap. white-space:pre-line
+        # on the text column renders _tooltip_text's embedded "\n" as a
+        # real line break without HTML in the attribute.
         '<div id="{tooltip_id}" style="position:fixed; display:none; '
-        'z-index:10000; max-width:260px; padding:10px 14px; '
-        'background:#1a1a1a; color:#eeeeee; font-size:16px; line-height:1.4; '
-        'white-space:pre-line; border-radius:6px; '
-        'border:1px solid rgba(255,255,255,0.18); '
-        'box-shadow:0 2px 10px rgba(0,0,0,0.4); pointer-events:none;"></div>'
+        'z-index:10000; max-width:300px; padding:10px 14px; '
+        'background:#1a1a1a; color:#eeeeee; '
+        'border-radius:6px; border:1px solid rgba(255,255,255,0.18); '
+        'box-shadow:0 2px 10px rgba(0,0,0,0.4); pointer-events:none; '
+        'align-items:center; gap:12px;">'
+        '<span id="{tooltip_kanji_id}" style="font-size:34px; line-height:1; '
+        'color:#ffffff; flex:0 0 auto;"></span>'
+        '<span id="{tooltip_text_id}" style="font-size:16px; line-height:1.4; '
+        'white-space:pre-line; flex:1 1 auto;"></span>'
+        '</div>'
         '<script>(function(){{'
         'var b=document.getElementById("{bar_id}"),'
         's=document.getElementById("{spacer_id}"),'
-        't=document.getElementById("{tooltip_id}");'
+        't=document.getElementById("{tooltip_id}"),'
+        'tk=document.getElementById("{tooltip_kanji_id}"),'
+        'tx=document.getElementById("{tooltip_text_id}");'
         'if(!b||!s)return;'
         '{stack_js}'
         'function fit(){{'
@@ -772,12 +802,13 @@ def _bar_html(entries: list[dict], current: dict[str, set[str]]) -> str:
         # Event delegation on the bar itself (one listener, not one per
         # span) - mouseover/mouseout bubble, so this catches hover on any
         # similar-kanji span.
-        'if(t){{'
+        'if(t&&tk&&tx){{'
         'b.addEventListener("mouseover",function(e){{'
         'var el=e.target.closest?e.target.closest("[data-tooltip]"):null;'
         'if(!el)return;'
-        't.textContent=el.getAttribute("data-tooltip");'
-        't.style.display="block";'
+        'tk.textContent=el.getAttribute("data-kanji")||el.textContent;'
+        'tx.textContent=el.getAttribute("data-tooltip");'
+        't.style.display="flex";'
         'var r=el.getBoundingClientRect();'
         't.style.left=Math.max(4,r.left)+"px";'
         't.style.bottom=(window.innerHeight-r.top+6)+"px";'
@@ -790,6 +821,7 @@ def _bar_html(entries: list[dict], current: dict[str, set[str]]) -> str:
         '}}'
         '}})();</script>'.format(
             bar_id=THIS_BAR_ID, spacer_id=THIS_SPACER_ID, tooltip_id=THIS_TOOLTIP_ID,
+            tooltip_kanji_id=THIS_TOOLTIP_KANJI_ID, tooltip_text_id=THIS_TOOLTIP_TEXT_ID,
             order=THIS_STACK_ORDER, offset=BOTTOM_OFFSET_PX, rows="".join(rows),
             stack_js=STACK_JS)
     )
