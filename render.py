@@ -48,7 +48,7 @@ THIS_STACK_ORDER = 0  # top-most - see __init__.py's module docstring
 # so each just inherits the button's own text color rather than needing
 # its own color to track theme changes.
 _EYE_SVG = (
-    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" '
+    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" '
     'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
     'stroke-linejoin="round">'
     '<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/>'
@@ -56,7 +56,7 @@ _EYE_SVG = (
     '</svg>'
 )
 _EYE_OFF_SVG = (
-    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" '
+    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" '
     'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
     'stroke-linejoin="round">'
     '<path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a21.3 21.3 0 0 1 5.06-5.94"/>'
@@ -379,10 +379,18 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
         'b.style.display=nv?\'block\':\'none\';'
         's.style.display=nv?\'block\':\'none\';'
         'pycmd(\'kanjidefs-toggle:\'+(nv?1:0));" '
-        'style="position:fixed; right:6px; bottom:6px; z-index:9999; '
-        'width:24px; height:24px; display:flex; align-items:center; '
-        'justify-content:center; border-radius:4px; background:#2b2b2b; '
-        'color:#dddddd; border:1px solid rgba(127,127,127,0.3); '
+        # left:calc(100vw - Npx), not right:Npx - a right-anchored fixed
+        # element is measured from the edge of the VISIBLE viewport, which
+        # narrows the instant a scrollbar appears (e.g. the answer side
+        # growing taller than the question side), visibly shifting the
+        # button sideways between cards. 100vw always includes the
+        # scrollbar's own width regardless of whether one is showing, so
+        # anchoring from the left with 100vw stays put either way.
+        'style="position:fixed; left:97vw; bottom:6px; '
+        'z-index:9999; width:30px; height:30px; display:flex; '
+        'align-items:center; justify-content:center; border-radius:4px; '
+        'background:#2b2b2b; color:#dddddd; '
+        'border:1px solid rgba(127,127,127,0.3); '
         'cursor:pointer; user-select:none;">{toggle_glyph}</div>'
         # Shared hover tooltip for similar-kanji links (folded in from
         # anki_addon_confused_kanji) - one element, positioned above

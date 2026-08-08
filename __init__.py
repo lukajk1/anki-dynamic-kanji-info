@@ -100,17 +100,10 @@ from pathlib import Path
 
 from aqt import dialogs, gui_hooks, mw
 
-# jp-services/paths.py is the single place that knows where every project's
-# folders actually live. Anki add-ons run outside this repo entirely
-# (installed into Anki's own addons21 folder), so this is a hardcoded
-# absolute path rather than a Path(__file__)-relative one.
-sys.path.insert(0, r"C:\FILESC\cs3\jp-services")
-import paths  # noqa: E402
-
-# This add-on's own folder needs to be on sys.path too, so the sibling
-# modules above (text_utils, collection_data, render) can import each other
-# by plain name the way __init__.py imports them here - Anki loads add-ons
-# as packages, but doesn't put an add-on's own directory on sys.path itself.
+# This add-on's own folder needs to be on sys.path, so the sibling modules
+# below (text_utils, collection_data, render) can import each other by
+# plain name the way __init__.py imports them here - Anki loads add-ons as
+# packages, but doesn't put an add-on's own directory on sys.path itself.
 sys.path.insert(0, str(Path(__file__).parent))
 
 from collection_data import (  # noqa: E402
@@ -122,9 +115,19 @@ from collection_data import (  # noqa: E402
 from render import bar_html, lookup
 from text_utils import extract_kanji, warn_once, word_field  # noqa: E402
 
-KANJI_DEFS_DB = str(paths.KANJI_DEFS / "kanji_defs.sqlite3")
-WORD_DATA_DB = str(paths.DB_CACHE / "word_data.sqlite3")
-SIMILARS_PATH = str(paths.SIMILAR_KANJI_DATA)
+# Bundled into this add-on's own data/ folder (see sync_kanjidefs_overlay_
+# data.py, which lives outside the add-on and refreshes these from the
+# jp-assets/jp-services checkout on this dev machine) rather than resolved
+# through jp-services/paths.py - a published add-on can't assume anyone
+# else's machine has C:\FILESC\cs3\... at all, so these need to travel
+# with the add-on itself. word_data.sqlite3 is 336MB and this add-on only
+# ever needs its char_reading_index table, so data/reading_index.sqlite3
+# is a standalone ~27MB extraction of just that one table, not a copy of
+# the whole database.
+DATA_DIR = Path(__file__).parent / "data"
+KANJI_DEFS_DB = str(DATA_DIR / "kanji_defs.sqlite3")
+WORD_DATA_DB = str(DATA_DIR / "reading_index.sqlite3")
+SIMILARS_PATH = str(DATA_DIR / "kanji.tgz_similars.ut8")
 
 _reading_index = KanjiReadingIndex(WORD_DATA_DB)
 _similar_index = SimilarKanjiIndex(SIMILARS_PATH)
