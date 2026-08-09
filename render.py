@@ -13,6 +13,7 @@ import os
 import re
 import sqlite3
 
+import theme
 from text_utils import BRACKET_RE, is_kana, katakana_to_hiragana
 
 # A comma+space, not "・" - a real space IS whitespace, so it's already a
@@ -335,9 +336,16 @@ def reading_span(kanji: str, reading: str, current: set[str], reading_index,
 
 def bar_html(entries: list[dict], current: dict[str, set[str]],
              similar_index, known_index, reading_index, kanji_defs_db: str,
-             visible: bool = True, highlight_color: str = "#ff007b") -> str:
+             visible: bool = True, highlight_color: str = "#ff007b",
+             night: bool | None = None) -> str:
     if not entries:
         return ""
+
+    # Resolved once for the whole render rather than per token lookup -
+    # is_night_mode() probes aqt, and there's no reason to repeat that a
+    # dozen times while building one bar. `night` overrides detection so
+    # tests/previews can render either theme on demand.
+    colors = theme.palette(night)
 
     # One row per kanji, each a left-anchored flex line rather than a
     # centered inline span - a fixed-width kanji column (2em) then
@@ -372,8 +380,8 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
         # so there's no stray line flush against the bar's own top edge) -
         # a thin hairline rather than a real <hr>, which would need its own
         # margin/color handling to read as "subtle" rather than a hard rule.
-        border = ("border-top:1px solid rgba(255,255,255,0.12); margin-top:4px; "
-                  "padding-top:4px; " if i > 0 else "")
+        border = ("border-top:1px solid {}; margin-top:4px; "
+                  "padding-top:4px; ".format(colors["separator"]) if i > 0 else "")
         # One grid per kanji entry: 3 columns (glyph, meanings, readings) x
         # 2 rows (meanings/readings line, then the Similar line). The glyph
         # spans BOTH rows (grid-row:1/3) so it's vertically centered across
@@ -388,27 +396,27 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
             if similar_row else ""
         )
         rows.append(
-            # Explicit light text color, not inherited - see the bar
-            # background comment below: an opaque bar can no longer borrow
-            # contrast from whatever page color shows through it. Readings
-            # column pins its own base color too (each reading_span sets
+            # Explicit text color, not inherited - see the bar background
+            # comment below: an opaque bar can no longer borrow contrast
+            # from whatever page color shows through it. Readings column
+            # pins its own base color too (each reading_span sets
             # "inherit" for the non-current case, which resolves against
-            # THIS span's color, not the row's #dddddd, unless this span
-            # itself pins the same light color).
+            # THIS span's color, not the row's var(--kd-text), unless this
+            # span itself pins the same color).
             '<div style="padding:6px 0; {border}">'
             '<div style="display:grid; grid-template-columns:2.4em 1fr 1fr; '
-            'column-gap:0.6em; text-align:left; color:#dddddd;">'
+            'column-gap:0.6em; text-align:left; color:{text};">'
             '<span style="grid-column:1; grid-row:1 / 3; font-size:46px; '
-            'color:#ffffff; align-self:center; margin-right:0.6em;">{}</span>'
+            'color:{text_strong}; align-self:center; margin-right:0.6em;">{}</span>'
             '<span style="grid-column:2; grid-row:1; font-size:18px; '
             'align-self:center;">{}</span>'
             '<span style="grid-column:3; grid-row:1; font-size:16px; '
-            'color:#dddddd; align-self:start; text-align:left;">{}</span>'
+            'color:{text}; align-self:start; text-align:right;">{}</span>'
             '{}'
             '</div>'
             '</div>'.format(
                 html.escape(e["kanji"]), html.escape(meanings), reading_html, similar_cell,
-                border=border)
+                border=border, text=colors["text"], text_strong=colors["text-strong"])
         )
 
     return (
@@ -429,10 +437,10 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
         # flex line, not another flex/wrap container - centering used to
         # apply to the whole entry as one unbreakable inline chunk, which
         # is what clipped 公 rather than wrapping it.
-        # Opaque, matching the other stacking bars (same #2b2b2b) - no
-        # backdrop-filter, since blur only makes sense over something
-        # translucent, and a consistent fixed color across every stacked
-        # bar reads as one system rather than several.
+        # Opaque, matching the other stacking bars' color (theme.TOKENS
+        # "bg") - no backdrop-filter, since blur only makes sense over
+        # something translucent, and a consistent fixed color across every
+        # stacked bar reads as one system rather than several.
         #
         # data-stack-order="0": top-most (lowest order number) - see
         # __init__.py's module docstring and STACK_JS.
@@ -444,8 +452,8 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
         '<div id="{bar_id}" data-stack-order="{order}" style="position:fixed; '
         'left:0; right:0; bottom:0; {bar_display}'
         'z-index:9998; padding:10px 6px 5px; '
-        'background:#2b2b2b; '
-        'border-top:1px solid rgba(127,127,127,0.3);">'
+        'background:{bg}; '
+        'border-top:1px solid {border};">'
         '<div style="max-width:520px; margin:0 auto;">{rows}</div>'
         '</div>'
         '<div id="{spacer_id}"></div>'
@@ -476,8 +484,8 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
         'style="position:fixed; left:90vw; bottom:6px; '
         'z-index:9999; width:30px; height:30px; display:flex; '
         'align-items:center; justify-content:center; border-radius:4px; '
-        'background:#2b2b2b; color:#dddddd; '
-        'border:1px solid rgba(127,127,127,0.3); '
+        'background:{toggle_bg}; color:{toggle_text}; '
+        'border:1px solid {toggle_border}; '
         'cursor:pointer; user-select:none;">{toggle_glyph}</div>'
         # Shared hover tooltip for similar-kanji links (folded in from
         # anki_addon_confused_kanji) - one element, positioned above
@@ -503,12 +511,12 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
         # room is left above the hovered span.
         '<div id="{tooltip_id}" style="position:fixed; display:none; '
         'z-index:10000; max-width:420px; padding:10px 14px; '
-        'background:#3d3d3d; color:#eeeeee; '
-        'border-radius:6px; border:1px solid rgba(255,255,255,0.18); '
-        'box-shadow:0 2px 10px rgba(0,0,0,0.4); pointer-events:none; '
+        'background:{tooltip_bg}; color:{tooltip_text}; '
+        'border-radius:6px; border:1px solid {tooltip_border}; '
+        'box-shadow:0 2px 10px {tooltip_shadow}; pointer-events:none; '
         'align-items:flex-start; gap:12px;">'
         '<span id="{tooltip_kanji_id}" style="font-size:34px; line-height:1; '
-        'color:#ffffff; flex:0 0 auto;"></span>'
+        'color:{tooltip_glyph}; flex:0 0 auto;"></span>'
         '<span id="{tooltip_text_id}" style="font-size:16px; line-height:1.4; '
         'white-space:pre-line; flex:1 1 auto; min-width:0; '
         'text-align:left;"></span>'
@@ -588,5 +596,11 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
             # that would need escaping, but html.escape is cheap insurance
             # against that changing later without anyone noticing here).
             eye_svg_js=html.escape(_EYE_SVG), eye_off_svg_js=html.escape(_EYE_OFF_SVG),
-            toggle_glyph=_EYE_SVG if visible else _EYE_OFF_SVG)
+            toggle_glyph=_EYE_SVG if visible else _EYE_OFF_SVG,
+            bg=colors["bg"], border=colors["border"], text=colors["text"],
+            toggle_bg=colors["bg"], toggle_text=colors["text"],
+            toggle_border=colors["border"],
+            tooltip_bg=colors["tooltip-bg"], tooltip_text=colors["tooltip-text"],
+            tooltip_border=colors["tooltip-border"], tooltip_shadow=colors["tooltip-shadow"],
+            tooltip_glyph=colors["text-strong"])
     )

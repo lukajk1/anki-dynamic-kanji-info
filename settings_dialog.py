@@ -41,7 +41,7 @@ class SettingsDialog(QDialog):
         super().__init__(mw)
         self.mw = mw
         self.addon_name = addon_name
-        self.setWindowTitle("Dynamic Kanji Companion Settings")
+        self.setWindowTitle("Dynamic Kanji Info Settings")
         self.setMinimumWidth(420)
 
         self._color = current_color
@@ -69,15 +69,18 @@ class SettingsDialog(QDialog):
         form.addRow("Word fields:", self.fields_edit)
 
         explanation = QLabel(
-            "Comma-separated list of note field names to scan for kanji, in "
-            "priority order - the first field on a note that isn't empty is "
-            "used, and the rest are ignored for that note. A field's text "
-            "can use 「漢字[かな]」 bracket notation "
-            "to give an exact reading for a single kanji; whole words work "
-            "too, just without that per-kanji precision."
+            "Comma-separated list of field names to read from to display "
+            "kanji info. Both bracketed terms (i.e. 会話[かいわ]) and "
+            "pure-kanji entries work."
         )
         explanation.setWordWrap(True)
-        explanation.setStyleSheet("color: palette(mid); font-size: 11px;")
+        # Font size only, no color: this label previously set
+        # "color: palette(mid)", which doesn't re-resolve when Anki flips
+        # between light and dark, leaving the text stuck at the old
+        # theme's color. Inheriting the dialog's normal label color is
+        # correct in both themes for free - the smaller size alone is
+        # enough to read as secondary text.
+        explanation.setStyleSheet("font-size: 11px;")
         form.addRow("", explanation)
 
         layout.addLayout(form)

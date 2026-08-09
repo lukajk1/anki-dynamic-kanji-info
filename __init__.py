@@ -1,4 +1,4 @@
-"""Dynamic Kanji Companion
+"""Dynamic Kanji Info
 
 Anki add-on: a bar along the bottom of the reviewer, shown only on the
 answer side, listing each kanji in the current card's word with its English
@@ -307,7 +307,7 @@ def open_settings_dialog() -> None:
 
 
 def on_main_window_did_init() -> None:
-    action = QAction("Dynamic Kanji Companion Settings…", mw)
+    action = QAction("Dynamic Kanji Info Settings…", mw)
     action.triggered.connect(open_settings_dialog)
     mw.form.menuTools.addAction(action)
 
