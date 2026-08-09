@@ -10,9 +10,10 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 import sqlite3
 
-from text_utils import katakana_to_hiragana
+from text_utils import BRACKET_RE, is_kana, katakana_to_hiragana
 
 # A comma+space, not "・" - a real space IS whitespace, so it's already a
 # valid line-break point on its own (no zero-width-space trick needed the
@@ -32,6 +33,11 @@ MAX_KUN_READINGS = 3
 # confused_kanji uses for its own (now-superseded) bar.
 MAX_SIMILAR_PER_KANJI = 8
 MAX_SIMILAR_LINKS = 24
+
+# Cap on words listed in a reading's hover tooltip before it collapses to
+# "+N more" - a common reading can match hundreds of notes, and a tooltip
+# taller than the window isn't readable. Clicking still opens all of them.
+MAX_TOOLTIP_WORDS = 8
 
 THIS_BAR_ID = "kanjidefs-overlay-bar"
 THIS_SPACER_ID = "kanjidefs-overlay-spacer"
@@ -148,8 +154,70 @@ def tooltip_text(entry: dict | None) -> str:
     return meanings + ("\n" + reading if reading else "")
 
 
+def ruby_html(raw: str) -> str:
+    """One word's bracket notation ("感心[かんしん]", "お 前[まえ]") as real
+    <ruby> markup, so the tooltip shows furigana ABOVE the kanji the way a
+    card does, rather than in brackets beside it.
+
+    A bracket annotates the kanji run immediately before it - the same rule
+    text_utils.readings_from_brackets parses for its own purposes, applied
+    here to the whole run at once (that function deliberately only accepts
+    single-kanji runs, since it has to attribute a reading to ONE kanji;
+    for display there's no such constraint, so 感心[かんしん] renders as one
+    ruby pair rather than being skipped).
+    """
+    out = []
+    pos = 0
+    for m in BRACKET_RE.finditer(raw):
+        base = re.sub(r"\s+", "", raw[pos:m.start()])
+        tail = len(base)
+        while tail and not is_kana(base[tail - 1]):
+            tail -= 1
+        # base[:tail] is leading text this bracket does NOT annotate (kana
+        # like the お in お 前[まえ]); base[tail:] is the kanji run it does.
+        out.append(html.escape(base[:tail]))
+        run = base[tail:]
+        if run:
+            out.append("<ruby>{}<rt>{}</rt></ruby>".format(
+                html.escape(run), html.escape(m.group(0)[1:-1])))
+        pos = m.end()
+    out.append(html.escape(re.sub(r"\s+", "", raw[pos:])))
+    return "".join(out)
+
+
+def reading_tooltip_html(words: list[str], cap: int = MAX_TOOLTIP_WORDS) -> str:
+    """Every word using a (kanji, reading) pair, one per line, each with
+    ruby furigana - the hover half of a reading link, whose click half
+    opens those same notes in the browser.
+
+    Capped: a very common reading matches a lot of notes, and a tooltip
+    taller than the screen can't be read anyway. The click-through still
+    reaches all of them, so nothing is lost by trimming the preview.
+    """
+    if not words:
+        return ""
+    # Sized here rather than on the shared tooltip's text column, which the
+    # similar-kanji tooltip also uses at its own smaller size. line-height
+    # has to be roomy enough for the <rt> furigana to sit above each word
+    # without the lines colliding.
+    # text-align:left is explicit, not inherited: this markup is injected
+    # into the reviewer's own card HTML, and most card templates center
+    # their body text - without pinning it here, the word list picks that
+    # up and renders ragged-centered instead of as a left-aligned column.
+    lines = [
+        '<div style="font-size:26px; line-height:1.5; padding:2px 0; '
+        'text-align:left;">{}</div>'.format(ruby_html(w))
+        for w in words[:cap]
+    ]
+    if len(words) > cap:
+        lines.append(
+            '<div style="font-size:16px; padding:4px 0 0; opacity:0.6; '
+            'text-align:left;">+{} more</div>'.format(len(words) - cap))
+    return "".join(lines)
+
+
 def similar_kanji_html(word_kanji: list[str], similar_index, known_index,
-                        kanji_defs_db: str) -> str:
+                        kanji_defs_db: str, highlight_color: str = "#4caf50") -> str:
     """"Similar: 末(2), 味(5), 沫" per source kanji that has any confusable
     neighbors - folded in from anki_addon_confused_kanji, same rules:
 
@@ -192,8 +260,9 @@ def similar_kanji_html(word_kanji: list[str], similar_index, known_index,
                 links.append(
                     '<span onclick="pycmd(\'kanjidefs-confused:{}\'); return false;"{} '
                     'style="cursor:pointer; text-decoration:underline dotted; '
-                    'text-underline-offset:2px; color:#4caf50;">{}({})</span>'.format(
-                        html.escape(target), tooltip_attr, html.escape(neighbor), len(note_ids))
+                    'text-underline-offset:2px; color:{};">{}({})</span>'.format(
+                        html.escape(target), tooltip_attr, highlight_color,
+                        html.escape(neighbor), len(note_ids))
                 )
             else:
                 links.append(
@@ -214,7 +283,8 @@ def similar_kanji_html(word_kanji: list[str], similar_index, known_index,
     return "".join(rows)
 
 
-def reading_span(kanji: str, reading: str, current: set[str], reading_index) -> str:
+def reading_span(kanji: str, reading: str, current: set[str], reading_index,
+                  highlight_color: str = "#4caf50") -> str:
     """One on/kun reading as a span, with a collection-count link if the
     (kanji, reading) pair has ever been seen, plain non-clickable text if
     not - same "don't link to an empty search" rule anki_addon_confused_
@@ -233,16 +303,30 @@ def reading_span(kanji: str, reading: str, current: set[str], reading_index) -> 
     is_current = hira in current
     if count:
         nids = ",".join(str(i) for i in note_ids)
-        color = "#4caf50" if is_current else "inherit"
+        color = highlight_color if is_current else "inherit"
         weight = "600" if is_current else "inherit"
+        # data-tooltip-html (not data-tooltip): the similar-kanji tooltip
+        # is plain text set via textContent, while this one is real <ruby>
+        # markup and has to go through innerHTML. Two attributes rather
+        # than one keeps the similar-kanji path escaping-safe as-is, with
+        # the shared JS below picking whichever the hovered span carries.
+        # No data-kanji here, unlike the similar-kanji spans: this tooltip
+        # is a list of whole WORDS, and a single kanji looming beside them
+        # adds nothing the row it was hovered from doesn't already show.
+        # The shared tooltip's glyph column hides itself when the attribute
+        # is absent (see the hover handler below).
+        tooltip = reading_tooltip_html(reading_index.words_for(kanji, hira))
+        tooltip_attr = (' data-tooltip-html="{}"'.format(
+                            html.escape(tooltip, quote=True))
+                         if tooltip else "")
         return (
-            '<span onclick="pycmd(\'kanjidefs-reading:{}\'); return false;" '
+            '<span onclick="pycmd(\'kanjidefs-reading:{}\'); return false;"{} '
             'style="display:inline-block; white-space:nowrap; cursor:pointer; '
             'text-decoration:underline dotted; '
             'text-underline-offset:2px; color:{}; font-weight:{};">{}({})</span>'.format(
-                nids, color, weight, html.escape(reading), count)
+                nids, tooltip_attr, color, weight, html.escape(reading), count)
         )
-    color = "#4caf50" if is_current else "inherit"
+    color = highlight_color if is_current else "inherit"
     weight = "600" if is_current else "inherit"
     return '<span style="display:inline-block; white-space:nowrap; color:{}; ' \
         'font-weight:{};">{}</span>'.format(
@@ -251,7 +335,7 @@ def reading_span(kanji: str, reading: str, current: set[str], reading_index) -> 
 
 def bar_html(entries: list[dict], current: dict[str, set[str]],
              similar_index, known_index, reading_index, kanji_defs_db: str,
-             visible: bool = True) -> str:
+             visible: bool = True, highlight_color: str = "#4caf50") -> str:
     if not entries:
         return ""
 
@@ -264,7 +348,8 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
     # edge in practice - centering has no left edge to wrap back to).
     similar_html_by_kanji = {}
     for e in entries:
-        row_html = similar_kanji_html([e["kanji"]], similar_index, known_index, kanji_defs_db)
+        row_html = similar_kanji_html(
+            [e["kanji"]], similar_index, known_index, kanji_defs_db, highlight_color)
         if row_html:
             similar_html_by_kanji[e["kanji"]] = row_html
 
@@ -272,8 +357,10 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
     for i, e in enumerate(entries):
         meanings = ", ".join(e["meanings"])
         kanji_current = current.get(e["kanji"], set())
-        on_spans = [reading_span(e["kanji"], r, kanji_current, reading_index) for r in e["on"]]
-        kun_spans = [reading_span(e["kanji"], r, kanji_current, reading_index) for r in e["kun"]]
+        on_spans = [reading_span(e["kanji"], r, kanji_current, reading_index, highlight_color)
+                    for r in e["on"]]
+        kun_spans = [reading_span(e["kanji"], r, kanji_current, reading_index, highlight_color)
+                     for r in e["kun"]]
         reading_html = READING_SEP.join(on_spans + kun_spans)
         # "X similar: ..." on its own line directly under this kanji's
         # meaning/reading row (folded in from anki_addon_confused_kanji) -
@@ -308,7 +395,7 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
             # "inherit" for the non-current case, which resolves against
             # THIS span's color, not the row's #dddddd, unless this span
             # itself pins the same light color).
-            '<div style="padding:1px 0; {border}">'
+            '<div style="padding:6px 0; {border}">'
             '<div style="display:grid; grid-template-columns:2.4em 1fr 1fr; '
             'column-gap:0.6em; text-align:left; color:#dddddd;">'
             '<span style="grid-column:1; grid-row:1 / 3; font-size:46px; '
@@ -356,7 +443,7 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
         # again.
         '<div id="{bar_id}" data-stack-order="{order}" style="position:fixed; '
         'left:0; right:0; bottom:0; {bar_display}'
-        'z-index:9998; padding:5px 6px; '
+        'z-index:9998; padding:10px 6px 5px; '
         'background:#2b2b2b; '
         'border-top:1px solid rgba(127,127,127,0.3);">'
         '<div style="max-width:520px; margin:0 auto;">{rows}</div>'
@@ -386,7 +473,7 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
         # button sideways between cards. 100vw always includes the
         # scrollbar's own width regardless of whether one is showing, so
         # anchoring from the left with 100vw stays put either way.
-        'style="position:fixed; left:97vw; bottom:6px; '
+        'style="position:fixed; left:90vw; bottom:6px; '
         'z-index:9999; width:30px; height:30px; display:flex; '
         'align-items:center; justify-content:center; border-radius:4px; '
         'background:#2b2b2b; color:#dddddd; '
@@ -407,16 +494,24 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
         # being, with room to breathe via the row gap. white-space:pre-line
         # on the text column renders tooltip_text's embedded "\n" as a
         # real line break without HTML in the attribute.
+        # align-items:center suited the original two-line similar-kanji
+        # tooltip, but a reading's word list can run many lines - centering
+        # a 34px glyph against that would float it in the middle of a tall
+        # column, so the glyph is pinned to the top instead and the row
+        # just grows downward from there. max-height/overflow are set by
+        # the hover handler, which is the only thing that knows how much
+        # room is left above the hovered span.
         '<div id="{tooltip_id}" style="position:fixed; display:none; '
-        'z-index:10000; max-width:300px; padding:10px 14px; '
+        'z-index:10000; max-width:420px; padding:10px 14px; '
         'background:#3d3d3d; color:#eeeeee; '
         'border-radius:6px; border:1px solid rgba(255,255,255,0.18); '
         'box-shadow:0 2px 10px rgba(0,0,0,0.4); pointer-events:none; '
-        'align-items:center; gap:12px;">'
+        'align-items:flex-start; gap:12px;">'
         '<span id="{tooltip_kanji_id}" style="font-size:34px; line-height:1; '
         'color:#ffffff; flex:0 0 auto;"></span>'
         '<span id="{tooltip_text_id}" style="font-size:16px; line-height:1.4; '
-        'white-space:pre-line; flex:1 1 auto;"></span>'
+        'white-space:pre-line; flex:1 1 auto; min-width:0; '
+        'text-align:left;"></span>'
         '</div>'
         '<script>(function(){{'
         'var b=document.getElementById("{bar_id}"),'
@@ -444,17 +539,38 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
         # similar-kanji span.
         'if(t&&tk&&tx){{'
         'b.addEventListener("mouseover",function(e){{'
-        'var el=e.target.closest?e.target.closest("[data-tooltip]"):null;'
+        'var el=e.target.closest?e.target.closest("[data-tooltip],[data-tooltip-html]"):null;'
         'if(!el)return;'
-        'tk.textContent=el.getAttribute("data-kanji")||el.textContent;'
-        'tx.textContent=el.getAttribute("data-tooltip");'
+        # Similar-kanji spans carry data-kanji and get the big glyph;
+        # reading spans don't, and hide the column entirely rather than
+        # falling back to the span's own text (which would put "カン(3)"
+        # where the glyph goes).
+        'var gk=el.getAttribute("data-kanji");'
+        'tk.textContent=gk||"";'
+        'tk.style.display=gk?"":"none";'
+        # Two kinds of tooltip share this one element: similar-kanji spans
+        # carry plain text in data-tooltip (textContent), reading spans
+        # carry <ruby> markup in data-tooltip-html (innerHTML). Setting
+        # whichever is absent to "" first stops the previous hover's
+        # content lingering underneath the new one.
+        'var htm=el.getAttribute("data-tooltip-html");'
+        'if(htm){{tx.innerHTML=htm;}}else{{tx.textContent=el.getAttribute("data-tooltip")||"";}}'
         't.style.display="flex";'
         'var r=el.getBoundingClientRect();'
         't.style.left=Math.max(4,r.left)+"px";'
-        't.style.bottom=(window.innerHeight-r.top+6)+"px";'
+        # Pin the tooltip's BOTTOM just above the hovered span so it grows
+        # upward as the word list gets longer, and cap its height against
+        # the space actually available above the span - a reading matching
+        # 20 words is far taller than the old two-line similar-kanji
+        # tooltip this element was sized for, and without a cap the top of
+        # a long list would run off the top of the window.
+        'var gap=window.innerHeight-r.top+6;'
+        't.style.bottom=gap+"px";'
+        't.style.maxHeight=Math.max(80,window.innerHeight-gap-8)+"px";'
+        't.style.overflowY="auto";'
         '}});'
         'b.addEventListener("mouseout",function(e){{'
-        'var el=e.target.closest?e.target.closest("[data-tooltip]"):null;'
+        'var el=e.target.closest?e.target.closest("[data-tooltip],[data-tooltip-html]"):null;'
         'if(!el)return;'
         't.style.display="none";'
         '}});'

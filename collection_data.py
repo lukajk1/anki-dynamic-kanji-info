@@ -20,7 +20,15 @@ import sqlite3
 import sys
 from collections import defaultdict
 
-from text_utils import extract_kanji, is_kanji, plain, readings_from_brackets, warn_once, word_field
+from text_utils import (
+    WORD_FIELDS,
+    extract_kanji,
+    is_kanji,
+    plain,
+    readings_from_brackets,
+    warn_once,
+    word_field,
+)
 
 
 class KanjiReadingIndex:
@@ -46,9 +54,17 @@ class KanjiReadingIndex:
     since that table's only index is on (kanji, reading), not `word`).
     """
 
-    def __init__(self, word_data_db: str):
+    def __init__(self, word_data_db: str, word_fields: list[str] = WORD_FIELDS):
         self.word_data_db = word_data_db
+        self.word_fields = word_fields
         self.index: dict[str, dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
+        # note id -> that note's raw word field ("感心[かんしん]"), kept so the
+        # reading hover-tooltip can list the actual WORDS behind a count
+        # rather than just how many there are. The index itself only holds
+        # note ids (all it needs for counts and for the browser's nid:
+        # search), and re-reading each note from the collection at hover
+        # time would put a per-hover collection query on the render path.
+        self.raw_by_note: dict[int, str] = {}
         self._seen: set[int] = set()
         self._word_cache: dict[str, list[tuple[str, str]]] = {}
         self.built = False
@@ -57,6 +73,7 @@ class KanjiReadingIndex:
         if not raw or note_id in self._seen:
             return
         self._seen.add(note_id)
+        self.raw_by_note[note_id] = raw
         found = readings_from_brackets(raw)
         for kanji, reading in word_map.get(plain(raw), ()):
             if kanji not in found:
@@ -72,11 +89,12 @@ class KanjiReadingIndex:
         here would read as still-active data."""
         self.index = defaultdict(lambda: defaultdict(set))
         self._seen = set()
+        self.raw_by_note = {}
 
         raws: dict[int, str] = {}
         for note_id in col.find_notes("-is:suspended"):
             note = col.get_note(note_id)
-            raw = word_field(dict(note.items()))
+            raw = word_field(dict(note.items()), self.word_fields)
             if raw:
                 raws[note_id] = raw
 
@@ -118,7 +136,7 @@ class KanjiReadingIndex:
     def add_note_incremental(self, note) -> None:
         if not self.built:
             return
-        raw = word_field(dict(note.items()))
+        raw = word_field(dict(note.items()), self.word_fields)
         if not raw:
             return
         self._add_note(note.id, raw, self._load_word_map({plain(raw)}))
@@ -142,6 +160,20 @@ class KanjiReadingIndex:
         the index isn't built yet or the pair has never been seen."""
         note_ids = self.index.get(kanji, {}).get(reading, set())
         return len(note_ids), sorted(note_ids)
+
+    def words_for(self, kanji: str, reading: str) -> list[str]:
+        """The raw word field of every note using this (kanji, reading)
+        pair, oldest note first (note ids are creation timestamps, so
+        sorting by id is chronological). Duplicates collapse - several
+        notes can share the same word text, and the tooltip listing it
+        twice would read as a rendering bug rather than as two notes."""
+        note_ids = self.index.get(kanji, {}).get(reading, set())
+        words = []
+        for note_id in sorted(note_ids):
+            raw = self.raw_by_note.get(note_id)
+            if raw and raw not in words:
+                words.append(raw)
+        return words
 
 
 class SimilarKanjiIndex:
@@ -186,7 +218,8 @@ class KnownKanjiIndex:
     Same "-is:suspended" exclusion and background-thread build as
     KanjiReadingIndex, for the same reasons."""
 
-    def __init__(self):
+    def __init__(self, word_fields: list[str] = WORD_FIELDS):
+        self.word_fields = word_fields
         self.index: dict[str, set[int]] = {}
         self.built = False
 
@@ -194,7 +227,7 @@ class KnownKanjiIndex:
         index: dict[str, set[int]] = {}
         for note_id in col.find_notes("-is:suspended"):
             note = col.get_note(note_id)
-            raw = word_field(dict(note.items()))
+            raw = word_field(dict(note.items()), self.word_fields)
             if not raw:
                 continue
             for kanji in extract_kanji(raw):
@@ -205,7 +238,7 @@ class KnownKanjiIndex:
     def add_note_incremental(self, note) -> None:
         if not self.built:
             return
-        raw = word_field(dict(note.items()))
+        raw = word_field(dict(note.items()), self.word_fields)
         if not raw:
             return
         for kanji in extract_kanji(raw):

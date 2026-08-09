@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import re
 
-# Word fields to read, in priority order - the first non-empty one wins.
-# Both use the same "漢字[かな]" bracket notation. Identical list, identical
-# priority order, to what anki_addon_confused_kanji and anki_addon_kanji_
-# readings_in_collection use - see __init__.py's module docstring for why
-# these must not drift apart.
+# Default word fields to read, in priority order - the first non-empty one
+# wins. Both use the same "漢字[かな]" bracket notation. This is only the
+# fallback if the user's config.json doesn't set "word_fields" (see
+# __init__.py) - kept here too so text_utils has a sane default when used
+# standalone (e.g. from tests) without going through config.
 WORD_FIELDS = ["jp-word", "Word Furigana"]
 
 BRACKET_RE = re.compile(r"\[[^\]]*\]")
@@ -30,8 +30,8 @@ def is_kana(ch: str) -> bool:
     return "ぁ" <= ch <= "ゟ" or "ァ" <= ch <= "ヿ"
 
 
-def word_field(note_fields: dict) -> str:
-    for name in WORD_FIELDS:
+def word_field(note_fields: dict, field_names: list[str] = WORD_FIELDS) -> str:
+    for name in field_names:
         value = note_fields.get(name, "")
         if value and value.strip():
             # Kaishi's furigana fields carry <b> tags around the target

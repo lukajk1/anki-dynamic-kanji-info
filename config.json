@@ -1,3 +1,5 @@
 {
-    "visible": true
+    "visible": true,
+    "highlight_color": "#4caf50",
+    "word_fields": ["jp-word", "Word Furigana"]
 }

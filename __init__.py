@@ -64,8 +64,9 @@ Two sources are merged per note, in this order:
 
   1. Bracket notation in the note's own word field ("側[がわ]"), which
      attributes a reading to a single kanji directly. Fields are tried in
-     WORD_FIELDS order - jp-word for this project's own note types, then
-     Kaishi 1.5k's "Word Furigana", which uses the identical notation.
+     config.json's word_fields order (default: jp-word for this project's
+     own note types, then Kaishi 1.5k's "Word Furigana", which uses the
+     identical notation).
 
   2. db_cache/word_data.sqlite3's char_reading_index, for kanji that step 1
      couldn't isolate. This matters more than it sounds: decks routinely
@@ -99,12 +100,15 @@ import sys
 from pathlib import Path
 
 from aqt import dialogs, gui_hooks, mw
+from aqt.qt import QAction
 
 # This add-on's own folder needs to be on sys.path, so the sibling modules
 # below (text_utils, collection_data, render) can import each other by
 # plain name the way __init__.py imports them here - Anki loads add-ons as
 # packages, but doesn't put an add-on's own directory on sys.path itself.
 sys.path.insert(0, str(Path(__file__).parent))
+
+import re  # noqa: E402
 
 from collection_data import (  # noqa: E402
     KanjiReadingIndex,
@@ -113,7 +117,8 @@ from collection_data import (  # noqa: E402
     start_background_build,
 )
 from render import bar_html, lookup
-from text_utils import extract_kanji, warn_once, word_field  # noqa: E402
+from settings_dialog import SettingsDialog  # noqa: E402
+from text_utils import WORD_FIELDS, extract_kanji, warn_once, word_field  # noqa: E402
 
 # Bundled into this add-on's own data/ folder (see sync_kanjidefs_overlay_
 # data.py, which lives outside the add-on and refreshes these from the
@@ -129,19 +134,47 @@ KANJI_DEFS_DB = str(DATA_DIR / "kanji_defs.sqlite3")
 WORD_DATA_DB = str(DATA_DIR / "reading_index.sqlite3")
 SIMILARS_PATH = str(DATA_DIR / "kanji.tgz_similars.ut8")
 
-_reading_index = KanjiReadingIndex(WORD_DATA_DB)
-_similar_index = SimilarKanjiIndex(SIMILARS_PATH)
-_known = KnownKanjiIndex()
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
-# Show/hide toggle state, persisted via Anki's own add-on config (a
-# config.json file next to this one, managed by addonManager) so it
-# survives across Anki restarts - a plain module-level bool would reset
-# every time Anki starts. Read once at import time rather than per-card:
-# the only writer is on_js_message below, which updates this in-memory
-# value at the same time it writes the config file, so the two never
+
+def _load_config() -> tuple[bool, str, list[str]]:
+    """(visible, highlight_color, word_fields) from config.json, each
+    falling back to its default (with a one-time warning) if the stored
+    value is missing or malformed - a hand-edited config.json shouldn't be
+    able to crash the add-on, just silently use sane defaults instead."""
+    cfg = mw.addonManager.getConfig(__name__) or {}
+
+    visible = bool(cfg.get("visible", True))
+
+    highlight_color = cfg.get("highlight_color", "#4caf50")
+    if not isinstance(highlight_color, str) or not _HEX_COLOR_RE.match(highlight_color):
+        warn_once("config's highlight_color ({!r}) isn't a #rrggbb hex code - "
+                  "using the default.".format(highlight_color))
+        highlight_color = "#4caf50"
+
+    word_fields = cfg.get("word_fields", WORD_FIELDS)
+    if not isinstance(word_fields, list) or not all(isinstance(f, str) for f in word_fields) \
+            or not word_fields:
+        warn_once("config's word_fields ({!r}) isn't a non-empty list of strings - "
+                  "using the default.".format(word_fields))
+        word_fields = WORD_FIELDS
+
+    return visible, highlight_color, word_fields
+
+
+# All user-facing settings live in config.json (Anki's own add-on config
+# mechanism, editable via the Tools menu's Settings dialog, Tools > Add-ons
+# > Config, or by hand) so they survive across Anki restarts - plain
+# module-level values would reset every time Anki starts. Read once at
+# import time; on_js_message's toggle handler and on_settings_saved below
+# are the only things that change any of these after startup, and both
+# update the in-memory values and the config file together so they never
 # drift within a session.
-_config = mw.addonManager.getConfig(__name__) or {}
-_visible = bool(_config.get("visible", True))
+_visible, _highlight_color, _word_fields = _load_config()
+
+_reading_index = KanjiReadingIndex(WORD_DATA_DB, _word_fields)
+_similar_index = SimilarKanjiIndex(SIMILARS_PATH)
+_known = KnownKanjiIndex(_word_fields)
 
 # One background-build state dict per index - see collection_data.
 # start_background_build's docstring for why each needs its own.
@@ -188,7 +221,7 @@ def on_card_will_show(text: str, card, kind: str) -> str:
     if "answer" not in kind.lower():
         return text
     try:
-        raw = word_field(dict(card.note().items()))
+        raw = word_field(dict(card.note().items()), _word_fields)
         if not raw:
             return text
         entries = lookup(KANJI_DEFS_DB, extract_kanji(raw))
@@ -198,7 +231,7 @@ def on_card_will_show(text: str, card, kind: str) -> str:
         current = _reading_index.current_readings(raw) if _reading_index.built else {}
         return text + bar_html(
             entries, current, _similar_index, _known, _reading_index, KANJI_DEFS_DB,
-            visible=_visible)
+            visible=_visible, highlight_color=_highlight_color)
     except Exception as e:
         warn_once("failed to render ({}: {}) - showing card without it."
                   .format(type(e).__name__, e))
@@ -210,9 +243,16 @@ def on_js_message(handled, message: str, context):
         # The click already toggled the DOM itself (see render.bar_html's
         # onclick) - this only persists the new state for future renders,
         # so no reason to touch _visible before the config write succeeds.
+        # Merges into the CURRENT config rather than writing {"visible":...}
+        # alone - the config also holds highlight_color/word_fields, and a
+        # bare overwrite here would silently wipe out anything the user set
+        # for those via Tools > Add-ons > Config every time they click the
+        # eye icon.
         global _visible
         _visible = message[len("kanjidefs-toggle:"):] == "1"
-        mw.addonManager.writeConfig(__name__, {"visible": _visible})
+        cfg = mw.addonManager.getConfig(__name__) or {}
+        cfg["visible"] = _visible
+        mw.addonManager.writeConfig(__name__, cfg)
         return (True, None)
     if message.startswith("kanjidefs-reading:"):
         nids = message[len("kanjidefs-reading:"):]
@@ -234,7 +274,46 @@ def on_js_message(handled, message: str, context):
     return handled
 
 
+def open_settings_dialog() -> None:
+    """Tools menu entry point. Reloads _visible/_highlight_color/_word_fields
+    and rebuilds the two collection indexes with the new field list after
+    the dialog is accepted, so a changed word_fields list takes effect on
+    the very next card shown rather than needing an Anki restart - the
+    color/visibility globals are simple re-reads, but word_fields is baked
+    into KanjiReadingIndex/KnownKanjiIndex at construction time (see
+    collection_data.py), so those two singletons need fresh instances
+    followed by a fresh background build to actually pick up the change."""
+    global _visible, _highlight_color, _word_fields, _reading_index, _known
+
+    dialog = SettingsDialog(mw, __name__, _highlight_color, _word_fields)
+    if dialog.exec() != SettingsDialog.DialogCode.Accepted:
+        return
+
+    _visible, _highlight_color, _word_fields = _load_config()
+
+    _reading_index = KanjiReadingIndex(WORD_DATA_DB, _word_fields)
+    _known = KnownKanjiIndex(_word_fields)
+    # Reset the "building" flags too, not just the indexes - these are the
+    # same state dicts the OLD index objects' in-flight builds (if any)
+    # still hold a closure over, and leaving "building" stuck True here
+    # would make start_background_build silently refuse to launch a build
+    # for the new objects.
+    _reading_index_state["building"] = False
+    _known_state["building"] = False
+    start_background_build(
+        mw, lambda: _reading_index.build(mw.col), "reading index", _reading_index_state)
+    start_background_build(
+        mw, lambda: _known.build(mw.col), "known-kanji index", _known_state)
+
+
+def on_main_window_did_init() -> None:
+    action = QAction("Dynamic Kanji Companion Settings…", mw)
+    action.triggered.connect(open_settings_dialog)
+    mw.form.menuTools.addAction(action)
+
+
 gui_hooks.card_will_show.append(on_card_will_show)
 gui_hooks.webview_did_receive_js_message.append(on_js_message)
 gui_hooks.add_cards_did_add_note.append(on_add_cards_did_add_note)
 gui_hooks.profile_did_open.append(on_profile_did_open)
+gui_hooks.main_window_did_init.append(on_main_window_did_init)
