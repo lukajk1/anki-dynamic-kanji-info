@@ -1,5 +1,5 @@
 """Builds the bar's HTML/CSS/JS: kanji_defs.sqlite3 lookups (_lookup),
-hover-tooltip content (tooltip_text), per-reading link rendering
+hover-tooltip content (similar_tooltip_html), per-reading link rendering
 (reading_span), the similar-kanji line (similar_kanji_html), and the full
 bar assembly (bar_html). See __init__.py's module docstring for the
 overall feature description and the visual layout rationale.
@@ -40,10 +40,16 @@ MAX_SIMILAR_LINKS = 24
 # taller than the window isn't readable. Clicking still opens all of them.
 MAX_TOOLTIP_WORDS = 8
 
+# Every font size inside a hover tooltip, in px, kept together so a resize
+# is one edit rather than a hunt through the markup. These do NOT cover the
+# bar itself - only what the tooltips render.
+TOOLTIP_TEXT_PX = 15       # meanings/readings, and the "+N more" line
+TOOLTIP_WORD_PX = 24       # the ruby word list
+TOOLTIP_GLYPH_PX = 32      # the big kanji beside a neighbor's meanings
+
 THIS_BAR_ID = "kanjidefs-overlay-bar"
 THIS_SPACER_ID = "kanjidefs-overlay-spacer"
 THIS_TOOLTIP_ID = "kanjidefs-overlay-tooltip"
-THIS_TOOLTIP_KANJI_ID = "kanjidefs-overlay-tooltip-kanji"
 THIS_TOOLTIP_TEXT_ID = "kanjidefs-overlay-tooltip-text"
 THIS_TOGGLE_ID = "kanjidefs-overlay-toggle"
 THIS_STACK_ORDER = 0  # top-most - see __init__.py's module docstring
@@ -141,18 +147,85 @@ def lookup(kanji_defs_db: str, kanji_list: list[str]) -> list[dict]:
         conn.close()
 
 
-def tooltip_text(entry: dict | None) -> str:
-    """Plain-text hover-tooltip content for one similar-kanji neighbor:
-    meanings, then on/kun readings on a second line - "" (no tooltip shown)
-    if kanji_defs.sqlite3 has no entry for it. Folded in from
-    anki_addon_confused_kanji, same format."""
-    if not entry:
+def similar_tooltip_html(entry: dict | None, words: list[str], kanji: str = "",
+                          glyph_color: str = "#ffffff",
+                          cap: int = MAX_TOOLTIP_WORDS) -> str:
+    """Hover-tooltip content for one similar-kanji neighbor: the collection
+    words containing that kanji (same ruby-furigana list the readings
+    tooltip shows, same cap) spanning the tooltip's full width, a rule,
+    then a row of the big kanji glyph beside its meanings and on/kun
+    readings.
+
+    The word list is deliberately NOT in a column beside the glyph - it's a
+    full-width block above the glyph row, so words start flush at the
+    tooltip's left edge instead of being indented past a 34px character
+    they aren't related to. Only the meanings/readings the glyph actually
+    labels sit next to it.
+
+    The glyph is emitted HERE rather than set separately by the hover JS
+    from data-kanji: it belongs inside the lower row, which only this
+    function knows the shape of, and one source for the whole tooltip beats
+    two that have to agree.
+
+    HTML rather than plain text, because the word list needs <ruby> markup
+    - see reading_span's own comment on why that means data-tooltip-html
+    instead of data-tooltip. (This replaced a plain-text tooltip_text()
+    that returned just the meanings/readings half.)
+
+    Either half can be missing: a neighbor with no notes yet still shows
+    its meanings, and a neighbor absent from kanji_defs.sqlite3 still shows
+    its words. The rule is only drawn when both halves are actually there,
+    so a tooltip never opens or closes with a stray line.
+    """
+    words_part = reading_tooltip_html(words, cap)
+
+    defs_lines = []
+    if entry:
+        meanings = ", ".join(entry["meanings"])
+        on = READING_SEP.join(entry["on"])
+        kun = READING_SEP.join(entry["kun"])
+        reading = READING_SEP.join(r for r in (on, kun) if r)
+        if meanings:
+            defs_lines.append(
+                '<div style="text-align:left;">{}</div>'.format(html.escape(meanings)))
+        if reading:
+            defs_lines.append(
+                '<div style="text-align:left;">{}</div>'.format(html.escape(reading)))
+
+    # The glyph row: glyph on the left, meanings/readings stacked to its
+    # right, centered against that block as a whole. Bottom-aligning (what
+    # this was) only looks right while the meanings fit one line - as soon
+    # as they wrap, the glyph sinks to the last reading line instead of
+    # sitting beside the block it labels.
+    #
+    # Gated on defs_lines, NOT on `kanji`: the glyph exists to label the
+    # meanings/readings beside it, so a neighbor absent from
+    # kanji_defs.sqlite3 gets no row at all rather than a rule followed by
+    # a lone character with an empty column next to it.
+    defs_part = ""
+    if defs_lines:
+        glyph = (
+            '<span style="font-size:{}px; line-height:1; color:{}; '
+            'flex:0 0 auto;">{}</span>'.format(
+                TOOLTIP_GLYPH_PX, glyph_color, html.escape(kanji))
+            if kanji else ""
+        )
+        defs_part = (
+            '<div style="display:flex; align-items:center; gap:12px;">'
+            '{}'
+            '<span style="flex:1 1 auto; min-width:0; text-align:left;">{}</span>'
+            '</div>'.format(glyph, "".join(defs_lines))
+        )
+
+    if not words_part and not defs_part:
         return ""
-    meanings = ", ".join(entry["meanings"])
-    on = READING_SEP.join(entry["on"])
-    kun = READING_SEP.join(entry["kun"])
-    reading = READING_SEP.join(r for r in (on, kun) if r)
-    return meanings + ("\n" + reading if reading else "")
+    if words_part and defs_part:
+        # currentColor so the rule tracks the tooltip's own text color in
+        # either theme, rather than needing its own light/dark token.
+        rule = ('<hr style="border:none; border-top:1px solid currentColor; '
+                'opacity:0.25; margin:8px 0;">')
+        return words_part + rule + defs_part
+    return words_part or defs_part
 
 
 def ruby_html(raw: str) -> str:
@@ -206,19 +279,21 @@ def reading_tooltip_html(words: list[str], cap: int = MAX_TOOLTIP_WORDS) -> str:
     # their body text - without pinning it here, the word list picks that
     # up and renders ragged-centered instead of as a left-aligned column.
     lines = [
-        '<div style="font-size:26px; line-height:1.5; padding:2px 0; '
-        'text-align:left;">{}</div>'.format(ruby_html(w))
+        '<div style="font-size:{}px; line-height:1.5; padding:2px 0; '
+        'text-align:left;">{}</div>'.format(TOOLTIP_WORD_PX, ruby_html(w))
         for w in words[:cap]
     ]
     if len(words) > cap:
         lines.append(
-            '<div style="font-size:16px; padding:4px 0 0; opacity:0.6; '
-            'text-align:left;">+{} more</div>'.format(len(words) - cap))
+            '<div style="font-size:{}px; padding:4px 0 0; opacity:0.6; '
+            'text-align:left;">+{} more</div>'.format(
+                TOOLTIP_TEXT_PX, len(words) - cap))
     return "".join(lines)
 
 
 def similar_kanji_html(word_kanji: list[str], similar_index, known_index,
-                        kanji_defs_db: str, highlight_color: str = "#ff007b") -> str:
+                        kanji_defs_db: str, highlight_color: str = "#ff007b",
+                        glyph_color: str = "#ffffff") -> str:
     """"Similar: 末(2), 味(5), 沫" per source kanji that has any confusable
     neighbors - folded in from anki_addon_confused_kanji, same rules:
 
@@ -228,8 +303,9 @@ def similar_kanji_html(word_kanji: list[str], similar_index, known_index,
       labeled with the note count in parens - same "(count)" convention
       reading_span uses for on/kun readings; one with zero notes is plain
       non-clickable text with no count (no dead-end search)
-    - hovering any neighbor shows its meaning/readings via the tooltip this
-      bar already renders (see tooltip_text and the shared JS in
+    - hovering any neighbor shows the collection words containing it, a
+      rule, then its own meanings/readings, via the tooltip this bar
+      already renders (see similar_tooltip_html and the shared JS in
       bar_html's returned HTML)
     """
     all_neighbors: list[str] = []
@@ -247,15 +323,21 @@ def similar_kanji_html(word_kanji: list[str], similar_index, known_index,
         for neighbor in neighbors:
             if link_count >= MAX_SIMILAR_LINKS:
                 break
-            tooltip = tooltip_text(defs_by_kanji.get(neighbor))
-            # data-kanji carries the BARE kanji for the tooltip's glyph
-            # column - el.textContent would include the "(count)" suffix
-            # the link itself displays, which isn't what the tooltip's
-            # large-glyph side should show.
-            tooltip_attr = (' data-tooltip="{}" data-kanji="{}"'.format(
-                                html.escape(tooltip), html.escape(neighbor))
-                             if tooltip else "")
             note_ids = known_index.note_ids_for(neighbor) if known_index.built else set()
+            # Words containing this neighbor, listed above its meanings -
+            # same ruby list and cap the readings tooltip uses. Only
+            # available once the known-kanji index has finished building;
+            # until then the tooltip is just the meanings half, as before.
+            neighbor_words = known_index.words_for(neighbor) if known_index.built else []
+            tooltip = similar_tooltip_html(
+                defs_by_kanji.get(neighbor), neighbor_words, neighbor, glyph_color)
+            # data-tooltip-html, not data-tooltip: this content carries
+            # <ruby> markup (see similar_tooltip_html). No data-kanji any
+            # more - the glyph is baked into that HTML now, since it lives
+            # inside the meanings row rather than in a column of its own.
+            tooltip_attr = (' data-tooltip-html="{}"'.format(
+                                html.escape(tooltip, quote=True))
+                             if tooltip else "")
             if note_ids:
                 target = "nid:" + ",".join(str(i) for i in sorted(note_ids))
                 links.append(
@@ -357,7 +439,8 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
     similar_html_by_kanji = {}
     for e in entries:
         row_html = similar_kanji_html(
-            [e["kanji"]], similar_index, known_index, kanji_defs_db, highlight_color)
+            [e["kanji"]], similar_index, known_index, kanji_defs_db, highlight_color,
+            colors["text-strong"])
         if row_html:
             similar_html_by_kanji[e["kanji"]] = row_html
 
@@ -502,30 +585,30 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
         # being, with room to breathe via the row gap. white-space:pre-line
         # on the text column renders tooltip_text's embedded "\n" as a
         # real line break without HTML in the attribute.
-        # align-items:center suited the original two-line similar-kanji
-        # tooltip, but a reading's word list can run many lines - centering
-        # a 34px glyph against that would float it in the middle of a tall
-        # column, so the glyph is pinned to the top instead and the row
-        # just grows downward from there. max-height/overflow are set by
-        # the hover handler, which is the only thing that knows how much
-        # room is left above the hovered span.
+        # A plain vertical block, NOT a glyph column + text column: the
+        # similar-kanji tooltip's word list spans the full width and its
+        # glyph now sits inside the meanings row that similar_tooltip_html
+        # builds, so there's nothing left for an outer flex row to arrange.
+        # (The glyph used to be a sibling span here, filled by the hover JS
+        # from data-kanji - that forced the word list into a column beside
+        # it, indented past a character it has nothing to do with.)
+        # max-height/overflow are set by the hover handler, which is the
+        # only thing that knows how much room is left above the hovered
+        # span.
         '<div id="{tooltip_id}" style="position:fixed; display:none; '
         'z-index:10000; max-width:420px; padding:10px 14px; '
         'background:{tooltip_bg}; color:{tooltip_text}; '
         'border-radius:6px; border:1px solid {tooltip_border}; '
-        'box-shadow:0 2px 10px {tooltip_shadow}; pointer-events:none; '
-        'align-items:flex-start; gap:12px;">'
-        '<span id="{tooltip_kanji_id}" style="font-size:34px; line-height:1; '
-        'color:{tooltip_glyph}; flex:0 0 auto;"></span>'
-        '<span id="{tooltip_text_id}" style="font-size:16px; line-height:1.4; '
-        'white-space:pre-line; flex:1 1 auto; min-width:0; '
+        'box-shadow:0 2px 10px {tooltip_shadow}; pointer-events:none;">'
+        '<span id="{tooltip_text_id}" style="display:block; '
+        'font-size:{tooltip_text_px}px; '
+        'line-height:1.4; white-space:pre-line; min-width:0; '
         'text-align:left;"></span>'
         '</div>'
         '<script>(function(){{'
         'var b=document.getElementById("{bar_id}"),'
         's=document.getElementById("{spacer_id}"),'
         't=document.getElementById("{tooltip_id}"),'
-        'tk=document.getElementById("{tooltip_kanji_id}"),'
         'tx=document.getElementById("{tooltip_text_id}");'
         'if(!b||!s)return;'
         '{stack_js}'
@@ -545,25 +628,17 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
         # Event delegation on the bar itself (one listener, not one per
         # span) - mouseover/mouseout bubble, so this catches hover on any
         # similar-kanji span.
-        'if(t&&tk&&tx){{'
+        'if(t&&tx){{'
         'b.addEventListener("mouseover",function(e){{'
         'var el=e.target.closest?e.target.closest("[data-tooltip],[data-tooltip-html]"):null;'
         'if(!el)return;'
-        # Similar-kanji spans carry data-kanji and get the big glyph;
-        # reading spans don't, and hide the column entirely rather than
-        # falling back to the span's own text (which would put "カン(3)"
-        # where the glyph goes).
-        'var gk=el.getAttribute("data-kanji");'
-        'tk.textContent=gk||"";'
-        'tk.style.display=gk?"":"none";'
-        # Two kinds of tooltip share this one element: similar-kanji spans
-        # carry plain text in data-tooltip (textContent), reading spans
-        # carry <ruby> markup in data-tooltip-html (innerHTML). Setting
-        # whichever is absent to "" first stops the previous hover's
-        # content lingering underneath the new one.
+        # Both tooltips now build their own markup (glyph included, for the
+        # similar-kanji one) - this just drops it in. The data-tooltip
+        # branch is a plain-text fallback nothing currently emits, kept
+        # because it costs two lines and keeps this element reusable.
         'var htm=el.getAttribute("data-tooltip-html");'
         'if(htm){{tx.innerHTML=htm;}}else{{tx.textContent=el.getAttribute("data-tooltip")||"";}}'
-        't.style.display="flex";'
+        't.style.display="block";'
         'var r=el.getBoundingClientRect();'
         't.style.left=Math.max(4,r.left)+"px";'
         # Pin the tooltip's BOTTOM just above the hovered span so it grows
@@ -585,7 +660,7 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
         '}}'
         '}})();</script>'.format(
             bar_id=THIS_BAR_ID, spacer_id=THIS_SPACER_ID, tooltip_id=THIS_TOOLTIP_ID,
-            tooltip_kanji_id=THIS_TOOLTIP_KANJI_ID, tooltip_text_id=THIS_TOOLTIP_TEXT_ID,
+            tooltip_text_id=THIS_TOOLTIP_TEXT_ID,
             toggle_id=THIS_TOGGLE_ID, order=THIS_STACK_ORDER, offset=BOTTOM_OFFSET_PX,
             rows="".join(rows), stack_js=STACK_JS,
             bar_display="" if visible else "display:none; ",
@@ -602,5 +677,5 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
             toggle_border=colors["border"],
             tooltip_bg=colors["tooltip-bg"], tooltip_text=colors["tooltip-text"],
             tooltip_border=colors["tooltip-border"], tooltip_shadow=colors["tooltip-shadow"],
-            tooltip_glyph=colors["text-strong"])
+            tooltip_text_px=TOOLTIP_TEXT_PX)
     )

@@ -221,18 +221,29 @@ class KnownKanjiIndex:
     def __init__(self, word_fields: list[str] = WORD_FIELDS):
         self.word_fields = word_fields
         self.index: dict[str, set[int]] = {}
+        # note id -> that note's raw word field, same purpose (and same
+        # near-zero cost, since build already has `raw` in hand) as
+        # KanjiReadingIndex.raw_by_note: it lets the similar-kanji hover
+        # tooltip list the actual WORDS behind a neighbour's count instead
+        # of only how many there are. Kept here rather than borrowed from
+        # KanjiReadingIndex so the two indexes stay independent - they're
+        # built separately and either can be unbuilt when the other isn't.
+        self.raw_by_note: dict[int, str] = {}
         self.built = False
 
     def build(self, col) -> None:
         index: dict[str, set[int]] = {}
+        raw_by_note: dict[int, str] = {}
         for note_id in col.find_notes("-is:suspended"):
             note = col.get_note(note_id)
             raw = word_field(dict(note.items()), self.word_fields)
             if not raw:
                 continue
+            raw_by_note[note_id] = raw
             for kanji in extract_kanji(raw):
                 index.setdefault(kanji, set()).add(note_id)
         self.index = index
+        self.raw_by_note = raw_by_note
         self.built = True
 
     def add_note_incremental(self, note) -> None:
@@ -241,11 +252,26 @@ class KnownKanjiIndex:
         raw = word_field(dict(note.items()), self.word_fields)
         if not raw:
             return
+        self.raw_by_note[note.id] = raw
         for kanji in extract_kanji(raw):
             self.index.setdefault(kanji, set()).add(note.id)
 
     def note_ids_for(self, kanji: str) -> set[int]:
         return self.index.get(kanji, set())
+
+    def words_for(self, kanji: str) -> list[str]:
+        """The raw word field of every note containing this kanji, oldest
+        note first (note ids are creation timestamps, so id order is
+        chronological). Duplicates collapse - several notes can share the
+        same word text, and listing it twice would read as a rendering bug
+        rather than as two notes. Same contract as
+        KanjiReadingIndex.words_for, minus the reading half of the key."""
+        words = []
+        for note_id in sorted(self.index.get(kanji, set())):
+            raw = self.raw_by_note.get(note_id)
+            if raw and raw not in words:
+                words.append(raw)
+        return words
 
 
 def start_background_build(mw, build_fn, label: str, state: dict) -> None:
