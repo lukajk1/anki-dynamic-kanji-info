@@ -489,8 +489,12 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
             '<div style="padding:6px 0; {border}">'
             '<div style="display:grid; grid-template-columns:2.4em 1fr 1fr; '
             'column-gap:0.6em; text-align:left; color:{text};">'
+            # margin-right in PX, not em: em here resolves against this
+            # span's own font-size (46px), so the previous "0.6em" was
+            # really 27.6px - three times the grid's own 0.6em column-gap,
+            # and it silently rescaled whenever the glyph size changed.
             '<span style="grid-column:1; grid-row:1 / 3; font-size:46px; '
-            'color:{text_strong}; align-self:center; margin-right:0.6em;">{}</span>'
+            'color:{text_strong}; align-self:center; margin-right:9px;">{}</span>'
             '<span style="grid-column:2; grid-row:1; font-size:18px; '
             'align-self:center;">{}</span>'
             '<span style="grid-column:3; grid-row:1; font-size:16px; '
