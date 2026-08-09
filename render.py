@@ -419,8 +419,16 @@ def reading_span(kanji: str, reading: str, current: set[str], reading_index,
 def bar_html(entries: list[dict], current: dict[str, set[str]],
              similar_index, known_index, reading_index, kanji_defs_db: str,
              visible: bool = True, highlight_color: str = "#ff007b",
-             night: bool | None = None) -> str:
-    if not entries:
+             night: bool | None = None, notice: str = "") -> str:
+    """The bar for one card. `notice` replaces the per-kanji rows with a
+    single message (used to tell a fresh install it still needs a note
+    field configured) - it reuses the whole bar shell, chrome and toggle
+    included, rather than being a second thing to position and theme. With
+    a notice there are no `entries` to require.
+
+    `notice` is inserted as HTML, not escaped - it's add-on-authored
+    markup, so it can carry <strong> and the like."""
+    if not entries and not notice:
         return ""
 
     # Resolved once for the whole render rather than per token lookup -
@@ -428,6 +436,12 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
     # dozen times while building one bar. `night` overrides detection so
     # tests/previews can render either theme on demand.
     colors = theme.palette(night)
+
+    # A notice replaces the kanji rows entirely - blanking `entries` lets
+    # the per-kanji loops below run over nothing rather than needing the
+    # whole row-building block wrapped in an else:.
+    if notice:
+        entries = []
 
     # One row per kanji, each a left-anchored flex line rather than a
     # centered inline span - a fixed-width kanji column (2em) then
@@ -504,6 +518,15 @@ def bar_html(entries: list[dict], current: dict[str, set[str]],
             '</div>'.format(
                 html.escape(e["kanji"]), html.escape(meanings), reading_html, similar_cell,
                 border=border, text=colors["text"], text_strong=colors["text-strong"])
+        )
+
+    if notice:
+        # NOT escaped: the notice is add-on-authored markup (it bolds the
+        # menu path), never user or note content, so there's nothing here
+        # to escape against. Callers must escape anything they interpolate.
+        rows.append(
+            '<div style="padding:6px 2px; font-size:15px; line-height:1.5; '
+            'text-align:left; color:{};">{}</div>'.format(colors["text"], notice)
         )
 
     return (

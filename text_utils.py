@@ -15,6 +15,12 @@ import re
 # standalone (e.g. from tests) without going through config.
 WORD_FIELDS = ["jp-word", "Word Furigana"]
 
+# The placeholder config.json ships with. Its only job is to be recognised
+# as "the user hasn't configured this yet" so the bar can say so instead of
+# rendering nothing and looking broken - see __init__.py's
+# is_unconfigured(). Must stay in sync with config.json's word_fields.
+PLACEHOLDER_WORD_FIELD = "example-field-name"
+
 BRACKET_RE = re.compile(r"\[[^\]]*\]")
 TAG_RE = re.compile(r"<[^>]+>")
 

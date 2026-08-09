@@ -118,7 +118,13 @@ from collection_data import (  # noqa: E402
 )
 from render import bar_html, lookup
 from settings_dialog import SettingsDialog  # noqa: E402
-from text_utils import WORD_FIELDS, extract_kanji, warn_once, word_field  # noqa: E402
+from text_utils import (  # noqa: E402
+    PLACEHOLDER_WORD_FIELD,
+    WORD_FIELDS,
+    extract_kanji,
+    warn_once,
+    word_field,
+)
 
 # Bundled into this add-on's own data/ folder (see sync_kanjidefs_overlay_
 # data.py, which lives outside the add-on and refreshes these from the
@@ -221,6 +227,22 @@ def on_card_will_show(text: str, card, kind: str) -> str:
     if "answer" not in kind.lower():
         return text
     try:
+        # A fresh install ships word_fields as a placeholder, which matches
+        # no real note - without this the bar would simply never appear and
+        # read as broken rather than unconfigured. Checked against the
+        # placeholder specifically, not "did this note match": a configured
+        # field that happens to be absent from THIS note is normal (mixed
+        # note types) and must stay silent.
+        if _word_fields == [PLACEHOLDER_WORD_FIELD]:
+            return text + bar_html(
+                [], {}, _similar_index, _known, _reading_index, KANJI_DEFS_DB,
+                visible=_visible, highlight_color=_highlight_color,
+                # Raw HTML (see bar_html's docstring) - hence &gt; rather
+                # than a bare ">" inside the bolded menu path.
+                notice="Dynamic Kanji Info can't display anything until a note "
+                       "field is set! Set a note field to read from via "
+                       "<strong>Tools &gt; Dynamic Kanji Info Settings...</strong>")
+
         raw = word_field(dict(card.note().items()), _word_fields)
         if not raw:
             return text
