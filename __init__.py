@@ -146,11 +146,11 @@ def _load_config() -> tuple[bool, str, list[str]]:
 
     visible = bool(cfg.get("visible", True))
 
-    highlight_color = cfg.get("highlight_color", "#4caf50")
+    highlight_color = cfg.get("highlight_color", "#ff007b")
     if not isinstance(highlight_color, str) or not _HEX_COLOR_RE.match(highlight_color):
         warn_once("config's highlight_color ({!r}) isn't a #rrggbb hex code - "
                   "using the default.".format(highlight_color))
-        highlight_color = "#4caf50"
+        highlight_color = "#ff007b"
 
     word_fields = cfg.get("word_fields", WORD_FIELDS)
     if not isinstance(word_fields, list) or not all(isinstance(f, str) for f in word_fields) \

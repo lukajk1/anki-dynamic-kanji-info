@@ -217,7 +217,7 @@ def reading_tooltip_html(words: list[str], cap: int = MAX_TOOLTIP_WORDS) -> str:
 
 
 def similar_kanji_html(word_kanji: list[str], similar_index, known_index,
-                        kanji_defs_db: str, highlight_color: str = "#4caf50") -> str:
+                        kanji_defs_db: str, highlight_color: str = "#ff007b") -> str:
     """"Similar: 末(2), 味(5), 沫" per source kanji that has any confusable
     neighbors - folded in from anki_addon_confused_kanji, same rules:
 
@@ -284,7 +284,7 @@ def similar_kanji_html(word_kanji: list[str], similar_index, known_index,
 
 
 def reading_span(kanji: str, reading: str, current: set[str], reading_index,
-                  highlight_color: str = "#4caf50") -> str:
+                  highlight_color: str = "#ff007b") -> str:
     """One on/kun reading as a span, with a collection-count link if the
     (kanji, reading) pair has ever been seen, plain non-clickable text if
     not - same "don't link to an empty search" rule anki_addon_confused_
@@ -335,7 +335,7 @@ def reading_span(kanji: str, reading: str, current: set[str], reading_index,
 
 def bar_html(entries: list[dict], current: dict[str, set[str]],
              similar_index, known_index, reading_index, kanji_defs_db: str,
-             visible: bool = True, highlight_color: str = "#4caf50") -> str:
+             visible: bool = True, highlight_color: str = "#ff007b") -> str:
     if not entries:
         return ""
 

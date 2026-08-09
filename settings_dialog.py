@@ -103,7 +103,7 @@ class SettingsDialog(QDialog):
 
     def _open_color_picker(self) -> None:
         start = QColor(self._color) if _HEX_COLOR_RE.match(self.color_edit.text()) \
-            else QColor("#4caf50")
+            else QColor("#ff007b")
         chosen = QColorDialog.getColor(start, self, "Choose highlight color")
         if chosen.isValid():
             hex_color = chosen.name()
@@ -113,7 +113,7 @@ class SettingsDialog(QDialog):
     def _on_accept(self) -> None:
         hex_color = self.color_edit.text().strip()
         if not _HEX_COLOR_RE.match(hex_color):
-            hex_color = "#4caf50"
+            hex_color = "#ff007b"
 
         fields = [f.strip() for f in self.fields_edit.text().split(",")]
         fields = [f for f in fields if f]
